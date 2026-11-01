@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clicked Relative Position</title>
+<meta name="description" content="Click anywhere to record precise x/y coordinates relative to a box, in pixels, percent or 0–1 fractions. Mark points on an image, then export them as JSON or CSV. Runs locally in your browser.">
+<style>
+/* ---------- theme ---------- */
+:root{
+  --bg:#0f1115; --panel:#161a21; --panel2:#1c212a; --fg:#e6e9ef; --muted:#8b94a7;
+  --line:#2a313d; --accent:#4cc2ff; --accent-dim:#1d4f6b; --warn:#ffb454; --bad:#ff6b6b;
+  --mono:ui-monospace,monospace;
+  --ui:system-ui,sans-serif;
+}
+html[data-theme="light"]{
+  --bg:#f4f6fa; --panel:#ffffff; --panel2:#eef1f6; --fg:#12151b; --muted:#5d6779;
+  --line:#d7dde7; --accent:#0d7fc4; --accent-dim:#bfe2f7; --warn:#a86400; --bad:#c62c2c;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--fg); font:13px/1.45 var(--ui);
+  display:flex; flex-direction:column; overflow:hidden;
+}
+button,select,input,textarea{font:inherit; color:inherit}
+button{
+  background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+  border-radius:6px; padding:4px 9px; cursor:pointer;
+}
+button:hover{border-color:var(--accent); color:var(--accent)}
+button:active{transform:translateY(1px)}
+button.primary{background:var(--accent-dim); border-color:var(--accent)}
+button.danger:hover{border-color:var(--bad); color:var(--bad)}
+input[type=number],input[type=text],select{
+  background:var(--bg); border:1px solid var(--line); border-radius:6px; padding:3px 6px; width:100%;
+}
+input[type=range]{width:100%; accent-color:var(--accent)}
+input[type=color]{background:none; border:1px solid var(--line); border-radius:6px; height:26px; width:100%; padding:1px; cursor:pointer}
+/* file inputs have a wide intrinsic width — it would overflow the panel */
+input[type=file]{width:100%; max-width:100%}
+input[type=checkbox]{accent-color:var(--accent); width:14px; height:14px; cursor:pointer}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--line); border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- chrome ---------- */
+header{
+  display:flex; align-items:center; gap:10px; padding:6px 12px;
+  background:var(--panel); border-bottom:1px solid var(--line); flex:0 0 auto; flex-wrap:nowrap;
+}
+header h1{font-size:13px; margin:0; letter-spacing:.4px; font-weight:600; flex:0 0 auto}
+header h1 small{color:var(--muted); font-weight:400; margin-left:6px}
+/* chips may wrap; the controls must never leave the top-right corner */
+.chips{display:flex; align-items:center; gap:6px; flex:1 1 auto; min-width:0;
+  flex-wrap:wrap; justify-content:flex-end}
+.ctls{display:flex; align-items:center; gap:6px; flex:0 0 auto}
+.chip{
+  font-family:var(--mono); font-size:10.5px; background:var(--panel2); border:1px solid var(--line);
+  border-radius:5px; padding:2px 6px; white-space:nowrap;
+}
+/* shed the least informative readouts first, so the bar never grows a second row */
+@media (max-width:1240px){ #chip-page{display:none} }
+@media (max-width:1100px){ header h1 small{display:none} }
+@media (max-width:1040px){ #chip-norm{display:none} }
+@media (max-width: 940px){ #chip-client{display:none} }
+@media (max-width: 800px){ #chip-screen{display:none} }
+.chip b{color:var(--accent); font-weight:600}
+.chip i{color:var(--muted); font-style:normal}
+
+main{flex:1; display:flex; min-height:0}
+aside{
+  width:248px; flex:0 0 auto; background:var(--panel); border-right:1px solid var(--line);
+  overflow-y:auto; overflow-x:hidden; padding:8px 10px 30px;
+}
+aside.right{border-right:none; border-left:1px solid var(--line); width:330px; display:flex; flex-direction:column; padding:0; overflow:hidden}
+
+/* ---------- multi-stage panel collapse ---------- */
+aside{transition:width .18s ease, opacity .14s ease, padding .18s ease, border-width .18s ease}
+body[data-ui="1"] aside.left,
+body[data-ui="2"] aside.left,
+body[data-ui="3"] aside.left,
+body[data-ui="2"] aside.right,
+body[data-ui="3"] aside.right{
+  width:0; padding-left:0; padding-right:0; opacity:0; border-width:0; overflow:hidden; pointer-events:none;
+}
+
+/* stage 3 — everything becomes a translucent overlay; the whole page is clickable */
+body[data-ui="3"] header{
+  position:fixed; inset:0 0 auto 0; z-index:40; padding:4px 10px;
+  background:color-mix(in srgb, var(--panel) 62%, transparent);
+  border-bottom-color:transparent; opacity:.26; pointer-events:none;
+  transition:opacity .15s ease, background .15s ease;
+}
+body[data-ui="3"].peek header{opacity:1; border-bottom-color:var(--line)}
+body[data-ui="3"] header button,
+body[data-ui="3"] header .stages{pointer-events:auto}
+body[data-ui="3"] .stage-wrap{padding:0; overflow:hidden}
+body[data-ui="3"] #stage{outline:none}
+body[data-ui="3"] #stage-meta{
+  position:fixed; left:0; right:0; bottom:3px; margin:0; z-index:40;
+  opacity:.3; pointer-events:none; transition:opacity .15s ease;
+}
+body[data-ui="3"].peek #stage-meta{opacity:.8}
+
+/* stage pips */
+.stages{display:flex; align-items:center; gap:3px; padding:3px 5px; background:var(--panel2);
+  border:1px solid var(--line); border-radius:6px}
+.pip{
+  width:9px; height:9px; padding:0; border-radius:50%; background:var(--line);
+  border:1px solid transparent; cursor:pointer; transition:background .12s, transform .12s;
+}
+.pip:hover{background:var(--muted); transform:scale(1.18)}
+.pip.on{background:var(--accent); border-color:var(--accent)}
+.pip.at{box-shadow:0 0 0 2px var(--accent-dim)}
+
+fieldset{border:none; border-top:1px solid var(--line); margin:10px 0 0; padding:8px 0 0}
+legend{display:none}
+.grp-title{font-size:10px; text-transform:uppercase; letter-spacing:.9px; color:var(--muted); margin:12px 0 6px}
+.grp-title:first-child{margin-top:2px}
+.row{display:flex; align-items:center; gap:8px; margin:5px 0; min-height:24px}
+.row label{flex:1 1 auto; min-width:0; color:var(--muted); font-size:12px; overflow-wrap:anywhere}
+.row .ctl{flex:0 0 100px; min-width:0}
+.row.wide .ctl{flex:1}
+.row.stack{display:block}
+.row.stack label{display:block; margin-bottom:3px}
+.hint{color:var(--muted); font-size:11px; margin:6px 0 0; overflow-wrap:anywhere}
+.hint code{font-family:var(--mono); overflow-wrap:anywhere}
+kbd{
+  font-family:var(--mono); font-size:10px; background:var(--panel2); border:1px solid var(--line);
+  border-bottom-width:2px; border-radius:4px; padding:0 4px;
+}
+
+/* ---------- stage ---------- */
+.stage-wrap{
+  flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:14px; overflow:auto; position:relative;
+}
+#stage{
+  position:relative; background:var(--panel); overflow:hidden; cursor:crosshair;
+  outline:1px solid var(--line); user-select:none; touch-action:none;
+  background-repeat:no-repeat; background-position:center;
+  width:100%; height:100%;
+}
+#stage.has-img{background-color:transparent}
+#gridlayer,#imglayer,#marklayer,#hairlayer{position:absolute; inset:0; pointer-events:none}
+#marklayer{pointer-events:none}
+#stage-meta{
+  font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:6px;
+  display:flex; gap:12px; flex-wrap:wrap; justify-content:center;
+}
+
+.hair{position:absolute; background:var(--accent); opacity:.5}
+.hair.v{top:0; bottom:0; width:1px}
+.hair.h{left:0; right:0; height:1px}
+
+.mark{
+  position:absolute; pointer-events:auto; cursor:grab;
+  transform:translate(-50%,-50%); color:var(--mk);
+}
+.mark.dragging{cursor:grabbing}
+.mark .glyph{position:relative; display:block; width:var(--s); height:var(--s)}
+.mark[data-style=dot]   .glyph{background:currentColor; border-radius:50%; box-shadow:0 0 0 1px rgba(0,0,0,.55)}
+.mark[data-style=ring]  .glyph{border:2px solid currentColor; border-radius:50%; box-shadow:0 0 0 1px rgba(0,0,0,.45), inset 0 0 0 1px rgba(0,0,0,.45)}
+.mark[data-style=cross] .glyph::before,
+.mark[data-style=cross] .glyph::after{
+  content:""; position:absolute; background:currentColor; box-shadow:0 0 0 1px rgba(0,0,0,.45);
+}
+.mark[data-style=cross] .glyph::before{left:50%; top:0; bottom:0; width:2px; margin-left:-1px}
+.mark[data-style=cross] .glyph::after{top:50%; left:0; right:0; height:2px; margin-top:-1px}
+.mark[data-style=target] .glyph{border:1px solid currentColor; border-radius:50%}
+.mark[data-style=target] .glyph::before{
+  content:""; position:absolute; inset:28%; background:currentColor; border-radius:50%;
+}
+.mark[data-style=pin]{transform:translate(-50%,-100%)}
+.mark[data-style=pin] .glyph{
+  background:currentColor; border-radius:50% 50% 50% 0; transform:rotate(-45deg);
+  box-shadow:0 0 0 1px rgba(0,0,0,.5);
+}
+.mark.sel{outline:1px dashed var(--accent); outline-offset:3px}
+.mark .tag{
+  position:absolute; left:calc(var(--s) * .6 + 6px); top:50%; transform:translateY(-50%);
+  font-family:var(--mono); font-size:10px; line-height:1.25; white-space:pre;
+  background:rgba(0,0,0,.62); color:#fff; padding:2px 4px; border-radius:4px;
+  border:1px solid rgba(255,255,255,.18); pointer-events:none;
+}
+html[data-theme=light] .mark .tag{background:rgba(255,255,255,.86); color:#111; border-color:rgba(0,0,0,.2)}
+.mark.flip .tag{left:auto; right:calc(var(--s) * .6 + 6px)}
+
+/* ---------- log ---------- */
+.log-head{
+  display:flex; align-items:center; gap:6px; padding:7px 9px; border-bottom:1px solid var(--line);
+  background:var(--panel); flex-wrap:wrap;
+}
+.log-head .t{font-size:11px; text-transform:uppercase; letter-spacing:.9px; color:var(--muted); margin-right:auto}
+#logbody{flex:1; overflow:auto; background:var(--panel)}
+table{border-collapse:collapse; width:100%; font-family:var(--mono); font-size:11px}
+thead th{
+  position:sticky; top:0; background:var(--panel2); color:var(--muted); text-align:right;
+  padding:4px 6px; border-bottom:1px solid var(--line); font-weight:500; white-space:nowrap; z-index:1;
+}
+thead th:first-child,tbody td:first-child{text-align:left}
+tbody td{padding:3px 6px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--panel2)}
+tbody tr.sel{background:var(--accent-dim)}
+tbody tr .sw{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; vertical-align:-1px}
+tbody td.act{text-align:center; color:var(--muted); width:22px}
+tbody td.act:hover{color:var(--bad)}
+.empty{padding:18px; text-align:center; color:var(--muted); font-size:12px}
+#out{
+  height:150px; border-top:1px solid var(--line); background:var(--bg); color:var(--fg);
+  font-family:var(--mono); font-size:10.5px; padding:7px 8px; resize:vertical; border-left:none;
+  border-right:none; border-bottom:none; border-radius:0; width:100%; white-space:pre; overflow:auto; display:none;
+}
+#out.show{display:block}
+
+/* ---------- context menu ---------- */
+#ctx{
+  position:fixed; z-index:60; min-width:212px; padding:4px;
+  background:var(--panel); border:1px solid var(--line); border-radius:8px;
+  box-shadow:0 10px 32px rgba(0,0,0,.45); font-size:12px;
+}
+#ctx[hidden]{display:none}
+#ctx .mi{
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  background:none; border:none; border-radius:5px; padding:5px 8px; cursor:pointer; color:var(--fg);
+}
+#ctx .mi:hover,#ctx .mi.on{background:var(--accent-dim); color:var(--fg)}
+#ctx .mi .k{margin-left:auto; color:var(--muted); font-family:var(--mono); font-size:10px}
+#ctx .mi.danger:hover{background:var(--bad); color:#fff}
+#ctx .mi.danger:hover .k{color:#fff}
+#ctx .sep{height:1px; background:var(--line); margin:4px 2px}
+#ctx .hd{
+  padding:4px 8px 5px; color:var(--muted); font-family:var(--mono); font-size:10px;
+  border-bottom:1px solid var(--line); margin-bottom:3px; white-space:nowrap;
+}
+#toast{
+  position:fixed; left:50%; bottom:22px; transform:translateX(-50%) translateY(14px);
+  background:var(--panel2); border:1px solid var(--accent); color:var(--fg);
+  padding:6px 12px; border-radius:20px; font-size:12px; opacity:0; pointer-events:none;
+  transition:opacity .16s, transform .16s; z-index:50;
+}
+#toast.show{opacity:1; transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>clicked-relative-position <small>click the stage to record precise x/y</small></h1>
+  <div class="chips">
+  <div class="chip" id="chip-live"><i>stage</i> <b>—</b></div>
+  <div class="chip" id="chip-norm"><i>%</i> <b>—</b></div>
+  <div class="chip" id="chip-client"><i>client</i> <b>—</b></div>
+  <div class="chip" id="chip-page"><i>page</i> <b>—</b></div>
+  <div class="chip" id="chip-screen" title="desktop-absolute (CSS px, relative to the primary screen)"><i>screen</i> <b>—</b></div>
+  <div class="chip" id="chip-count"><i>marks</i> <b>0</b></div>
+  </div>
+  <div class="ctls">
+  <div class="stages" id="stages" title="Panel stages — click a pip, or the ⇲ button / \ key to step">
+    <button class="pip" data-stage="0" title="0 · all panels (?ui=all)"></button>
+    <button class="pip" data-stage="1" title="1 · config hidden (?ui=wide)"></button>
+    <button class="pip" data-stage="2" title="2 · both panels hidden (?ui=focus)"></button>
+    <button class="pip" data-stage="3" title="3 · overlay topbar, full-page capture (?ui=zen)"></button>
+  </div>
+  <button id="btn-cycle" title="Next stage — \ (shift+\ steps back)">⇲</button>
+  <button id="btn-theme" title="Toggle theme">◐</button>
+  </div>
+</header>
+
+<main>
+  <!-- ---------------- config ---------------- -->
+  <aside id="cfgpanel" class="left">
+    <div class="grp-title">Coordinates</div>
+    <div class="row"><label for="c-origin">Origin</label>
+      <span class="ctl"><select id="c-origin" data-cfg="origin">
+        <option value="tl">top-left</option>
+        <option value="bl">bottom-left</option>
+        <option value="center">center (y↑)</option>
+      </select></span></div>
+    <div class="row"><label for="c-units">Units</label>
+      <span class="ctl"><select id="c-units" data-cfg="units">
+        <option value="px">px (CSS)</option>
+        <option value="pct">percent</option>
+        <option value="norm">normalized 0–1</option>
+        <option value="dev">device px</option>
+      </select></span></div>
+    <div class="row"><label for="c-prec">Decimals <span id="v-prec" class="chip"></span></label>
+      <span class="ctl"><input type="range" id="c-prec" data-cfg="prec" min="0" max="6" step="1"></span></div>
+    <div class="row"><label for="c-yflip">Invert Y axis</label>
+      <span class="ctl"><input type="checkbox" id="c-yflip" data-cfg="yflip"></span></div>
+
+    <div class="grp-title">Snapping</div>
+    <div class="row"><label for="c-snap">Snap to grid</label>
+      <span class="ctl"><input type="checkbox" id="c-snap" data-cfg="snap"></span></div>
+    <div class="row"><label for="c-grid">Grid size (px)</label>
+      <span class="ctl"><input type="number" id="c-grid" data-cfg="grid" min="1" max="512" step="1"></span></div>
+    <div class="row"><label for="c-showgrid">Show grid</label>
+      <span class="ctl"><input type="checkbox" id="c-showgrid" data-cfg="showGrid"></span></div>
+    <div class="row"><label for="c-hair">Crosshair guides</label>
+      <span class="ctl"><input type="checkbox" id="c-hair" data-cfg="hair"></span></div>
+
+    <div class="grp-title">Markers</div>
+    <div class="row"><label for="c-style">Shape</label>
+      <span class="ctl"><select id="c-style" data-cfg="style">
+        <option value="dot">dot</option>
+        <option value="ring">ring</option>
+        <option value="cross">cross</option>
+        <option value="target">target</option>
+        <option value="pin">pin</option>
+      </select></span></div>
+    <div class="row"><label for="c-size">Size <span id="v-size" class="chip"></span></label>
+      <span class="ctl"><input type="range" id="c-size" data-cfg="size" min="4" max="48" step="1"></span></div>
+    <div class="row"><label for="c-color">Color</label>
+      <span class="ctl"><input type="color" id="c-color" data-cfg="color"></span></div>
+    <div class="row"><label for="c-rainbow">Cycle hue per mark</label>
+      <span class="ctl"><input type="checkbox" id="c-rainbow" data-cfg="rainbow"></span></div>
+    <div class="row"><label for="c-label">Label</label>
+      <span class="ctl"><select id="c-label" data-cfg="label">
+        <option value="none">none</option>
+        <option value="index">index</option>
+        <option value="coords">coords</option>
+        <option value="both">index + coords</option>
+      </select></span></div>
+    <div class="row"><label for="c-drag">Draggable marks</label>
+      <span class="ctl"><input type="checkbox" id="c-drag" data-cfg="drag"></span></div>
+    <div class="row"><label for="c-max">Keep last N (0=∞)</label>
+      <span class="ctl"><input type="number" id="c-max" data-cfg="max" min="0" max="10000" step="1"></span></div>
+
+    <div class="grp-title">Stage</div>
+    <div class="row"><label for="c-aspect">Aspect</label>
+      <span class="ctl"><select id="c-aspect" data-cfg="aspect">
+        <option value="free">fill area</option>
+        <option value="1">1 : 1</option>
+        <option value="1.3333">4 : 3</option>
+        <option value="1.7778">16 : 9</option>
+        <option value="fixed">fixed size</option>
+      </select></span></div>
+    <div class="row"><label for="c-fw">Fixed w × h</label>
+      <span class="ctl" style="display:flex;gap:4px">
+        <input type="number" id="c-fw" data-cfg="fw" min="50" max="8000" step="1">
+        <input type="number" id="c-fh" data-cfg="fh" min="50" max="8000" step="1">
+      </span></div>
+    <div class="row stack"><label for="c-img">Background image (local only)</label>
+      <input type="file" id="c-img" accept="image/*" style="font-size:11px">
+    </div>
+    <div class="row"><label for="c-fit">Image fit</label>
+      <span class="ctl"><select id="c-fit" data-cfg="fit">
+        <option value="contain">contain</option>
+        <option value="cover">cover</option>
+        <option value="100% 100%">stretch</option>
+        <option value="auto">natural</option>
+      </select></span></div>
+    <div class="row"><label>&nbsp;</label>
+      <span class="ctl"><button id="btn-img-clear" style="width:100%">remove image</button></span></div>
+
+    <div class="grp-title">Session</div>
+    <div class="row"><label for="c-persist">Persist to localStorage</label>
+      <span class="ctl"><input type="checkbox" id="c-persist" data-cfg="persist"></span></div>
+    <div class="row"><label>&nbsp;</label>
+      <span class="ctl"><button id="btn-reset" class="danger" style="width:100%">reset config</button></span></div>
+
+    <p class="hint">
+      <kbd>right-click</kbd> menu (copy coords / JSON / portable record) ·
+      <kbd>click</kbd> add · <kbd>alt+click</kbd> on a mark deletes ·
+      <kbd>drag</kbd> moves · <kbd>↑↓←→</kbd> nudge (<kbd>shift</kbd>=10px) ·
+      <kbd>ctrl+z</kbd>/<kbd>ctrl+y</kbd> undo/redo · <kbd>del</kbd> remove ·
+      <kbd>g</kbd> grid · <kbd>esc</kbd> deselect
+    </p>
+    <p class="hint">
+      Panel stages: <kbd>\</kbd> steps forward, <kbd>shift+\</kbd> back, <kbd>1</kbd>–<kbd>4</kbd> jump.
+      <br>0 <b>all</b> → 1 <b>wide</b> (config hidden) → 2 <b>focus</b> (log hidden too) →
+      3 <b>zen</b> (topbar becomes a click-through overlay; the whole page records clicks,
+      <kbd>esc</kbd> exits). The stage is mirrored into the URL as <code>?ui=wide|focus|zen</code>
+      (omitted = <code>all</code>) so a link restores the exact layout.
+    </p>
+  </aside>
+
+  <!-- ---------------- stage ---------------- -->
+  <div class="stage-wrap" id="wrap">
+    <div id="stage">
+      <div id="gridlayer"></div>
+      <div id="hairlayer"></div>
+      <div id="marklayer"></div>
+    </div>
+    <div id="stage-meta">
+      <span id="m-size">—</span>
+      <span id="m-dpr">—</span>
+      <span id="m-rect">—</span>
+      <span id="m-desk">—</span>
+      <span id="m-img">no image</span>
+    </div>
+  </div>
+
+  <!-- ---------------- log ---------------- -->
+  <aside class="right" id="logpanel">
+    <div class="log-head">
+      <span class="t">log</span>
+      <button id="btn-json" title="Show JSON">json</button>
+      <button id="btn-csv" title="Show CSV">csv</button>
+      <button id="btn-copy" title="Copy current export to clipboard">copy</button>
+      <button id="btn-save" title="Download export">save</button>
+      <button id="btn-undo" title="Undo (ctrl+z)">↶</button>
+      <button id="btn-clear" class="danger" title="Delete every mark">clear</button>
+    </div>
+    <div id="logbody"><div class="empty">no clicks yet — click the stage</div></div>
+    <textarea id="out" readonly spellcheck="false"></textarea>
+  </aside>
+</main>
+
+<div id="ctx" hidden></div>
+<div id="toast"></div>
+
+<script>
+"use strict";
+(function () {
+
+/* =======================================================================
+   state
+   ======================================================================= */
+const KEY = "clicked-relative-position.v1";
+
+const DEFAULTS = {
+  origin:"tl", units:"px", prec:2, yflip:false,
+  snap:false, grid:25, showGrid:true, hair:true,
+  style:"dot", size:11, color:"#4cc2ff", rainbow:false, label:"index", drag:true, max:0,
+  aspect:"free", fw:800, fh:600, fit:"contain",
+  persist:true, theme:"dark", ui:0
+};
+
+/* panel stages: each step strips one more layer of chrome.
+   stage 3 turns the topbar into a click-through overlay, so every pixel of the
+   page — including the area under the bar — is measurable. */
+const UI_STAGES = ["all", "wide", "focus", "zen"];
+
+const cfg   = Object.assign({}, DEFAULTS);
+let   marks = [];          // [{id,n,x,y,w,h,t,client:{},page:{},screen:{},dpr,mods,hue,moved}]
+let   seq   = 0;           // running click counter (never reused)
+let   sel   = null;        // selected mark id
+let   undoStack = [], redoStack = [];
+let   imgURL = null, imgName = "", imgNat = null;
+let   vpOrigin = null;     // viewport (0,0) on the desktop — learned from the first pointermove
+
+const $  = (s, r) => (r || document).querySelector(s);
+const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+
+const stage = $("#stage"), wrap = $("#wrap"),
+      marklayer = $("#marklayer"), gridlayer = $("#gridlayer"), hairlayer = $("#hairlayer");
+
+/* =======================================================================
+   helpers
+   ======================================================================= */
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function fmt(n) { return Number(n).toFixed(cfg.prec); }
+
+/** stage px -> display pair, honouring origin / units / yflip */
+function display(x, y, w, h) {
+  let dx = x, dy = y;
+  if (cfg.origin === "bl")          dy = h - y;
+  else if (cfg.origin === "center") { dx = x - w / 2; dy = h / 2 - y; }
+  if (cfg.yflip) dy = -dy;
+
+  switch (cfg.units) {
+    case "pct":  return [fmt(w ? dx / w * 100 : 0) + "%", fmt(h ? dy / h * 100 : 0) + "%"];
+    case "norm": return [fmt(w ? dx / w : 0),             fmt(h ? dy / h : 0)];
+    case "dev":  { const r = window.devicePixelRatio || 1; return [fmt(dx * r), fmt(dy * r)]; }
+    default:     return [fmt(dx), fmt(dy)];
+  }
+}
+function displayRaw(x, y, w, h) {           // numbers, not strings (for export)
+  const [a, b] = display(x, y, w, h);
+  return [parseFloat(a), parseFloat(b)];
+}
+function unit() {
+  return cfg.units === "pct" ? "%" : cfg.units === "norm" ? "" : "px";
+}
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("show"), 1400);
+}
+
+function snapshot() {
+  undoStack.push(JSON.stringify({ marks, seq }));
+  if (undoStack.length > 100) undoStack.shift();
+  redoStack.length = 0;
+}
+function restore(from, to) {
+  if (!from.length) return false;
+  to.push(JSON.stringify({ marks, seq }));
+  const s = JSON.parse(from.pop());
+  marks = s.marks; seq = s.seq;
+  if (!marks.some(m => m.id === sel)) sel = null;
+  return true;
+}
+
+/* =======================================================================
+   persistence
+   ======================================================================= */
+function save() {
+  if (!cfg.persist) return;
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ cfg, marks, seq }));
+  } catch (e) { /* quota / disabled storage — non fatal */ }
+}
+function load() {
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) { return; }
+  if (!raw) return;
+  try {
+    const s = JSON.parse(raw);
+    Object.keys(DEFAULTS).forEach(k => { if (s.cfg && k in s.cfg) cfg[k] = s.cfg[k]; });
+    if (Array.isArray(s.marks)) marks = s.marks;
+    seq = s.seq || marks.length;
+  } catch (e) { /* corrupt payload — ignore */ }
+}
+
+/* =======================================================================
+   panel stages
+   ======================================================================= */
+const zen = () => cfg.ui === 3;
+
+function parseUIParam() {
+  const src = location.search.slice(1) + "&" + location.hash.replace(/^#/, "");
+  const m = /(?:^|&)ui=([^&]+)/.exec(src);
+  if (!m) return null;                                   // absent === "all"
+  const v = decodeURIComponent(m[1]).toLowerCase();
+  if (/^[0-3]$/.test(v)) return +v;
+  const i = UI_STAGES.indexOf(v);
+  return i < 0 ? null : i;
+}
+
+function writeUIParam() {
+  const name = UI_STAGES[cfg.ui];
+  try {
+    const u = new URL(location.href);
+    if (cfg.ui === 0) u.searchParams.delete("ui"); else u.searchParams.set("ui", name);
+    if (u.hash) u.hash = u.hash.replace(/(^|&)ui=[^&]*/g, "").replace(/^#&/, "#");
+    history.replaceState(null, "", u.pathname + u.search + (u.hash === "#" ? "" : u.hash));
+  } catch (e) {
+    // file:// in some browsers rejects replaceState — fall back to the hash
+    try { location.hash = cfg.ui === 0 ? "" : "ui=" + name; } catch (e2) { /* give up quietly */ }
+  }
+}
+
+function setStage(n, quiet) {
+  cfg.ui = clamp(n | 0, 0, UI_STAGES.length - 1);
+  document.body.dataset.ui = cfg.ui;
+  if (!zen()) document.body.classList.remove("peek");
+  $$("#stages .pip").forEach(p => {
+    const i = +p.dataset.stage;
+    p.classList.toggle("on", i <= cfg.ui);     // filled up to the current stage
+    p.classList.toggle("at", i === cfg.ui);
+  });
+  writeUIParam();
+  layoutStage(); renderAll(); save();
+  // the panels animate to their new width, so re-fit once they have settled
+  clearTimeout(setStage._t);
+  setStage._t = setTimeout(() => { layoutStage(); renderAll(); }, 240);
+  if (!quiet) toast(`stage ${cfg.ui} · ${UI_STAGES[cfg.ui]}` +
+    (zen() ? " — whole page is clickable" : ""));
+}
+function cycleStage(back) {
+  setStage((cfg.ui + (back ? -1 : 1) + UI_STAGES.length) % UI_STAGES.length);
+}
+
+/* =======================================================================
+   stage geometry
+   ======================================================================= */
+function layoutStage() {
+  const pad  = zen() ? 0 : 28;
+  // the meta line wraps on narrow layouts, so measure it rather than assume a height
+  const meta = $("#stage-meta");
+  const foot = zen() ? 0 : (meta.offsetHeight ? meta.offsetHeight + 12 : 34);
+  const availW = wrap.clientWidth  - pad;
+  const availH = wrap.clientHeight - foot;
+  const aspect = zen() ? "free" : cfg.aspect;   // zen always fills the viewport
+  let w, h;
+
+  if (aspect === "free") { w = availW; h = availH; }
+  else if (aspect === "fixed") { w = cfg.fw; h = cfg.fh; }
+  else {
+    const a = parseFloat(aspect) || 1;
+    w = availW; h = w / a;
+    if (h > availH) { h = availH; w = h * a; }
+  }
+  stage.style.width  = Math.max(40, Math.round(w)) + "px";
+  stage.style.height = Math.max(40, Math.round(h)) + "px";
+  renderMeta();
+}
+
+/** raw pointer -> stage-local CSS px (unrounded, sub-pixel accurate) */
+function localPoint(ev) {
+  const r = stage.getBoundingClientRect();
+  return {
+    x: ev.clientX - r.left - stage.clientLeft,
+    y: ev.clientY - r.top  - stage.clientTop,
+    w: stage.clientWidth,
+    h: stage.clientHeight,
+    r
+  };
+}
+function applySnap(p) {
+  if (!cfg.snap) return p;
+  const g = Math.max(1, cfg.grid);
+  return { ...p, x: Math.round(p.x / g) * g, y: Math.round(p.y / g) * g };
+}
+
+/* =======================================================================
+   record / mutate
+   ======================================================================= */
+/* a `click` is a MouseEvent and drops all device data, so keep the last
+   pointerdown alongside it (capture phase — marker drags must not hide it) */
+let lastPointer = null;
+stage.addEventListener("pointerdown", ev => {
+  lastPointer = {
+    type: ev.pointerType, id: ev.pointerId, primary: ev.isPrimary,
+    pressure: +(ev.pressure || 0).toFixed(4), tangential: ev.tangentialPressure || 0,
+    tiltX: ev.tiltX || 0, tiltY: ev.tiltY || 0, twist: ev.twist || 0,
+    cw: +(ev.width || 0).toFixed(2), ch: +(ev.height || 0).toFixed(2),
+    ts: ev.timeStamp
+  };
+}, true);
+
+function addMark(ev) {
+  const p = applySnap(localPoint(ev));
+  if (p.x < 0 || p.y < 0 || p.x > p.w || p.y > p.h) return;
+  snapshot();
+
+  const n = ++seq;
+  const el = document.elementFromPoint(ev.clientX, ev.clientY);
+  const m = {
+    id: "m" + n + "_" + Date.now().toString(36),
+    n,
+    x: p.x, y: p.y, w: p.w, h: p.h,
+    t: Date.now(),
+    ts: +ev.timeStamp.toFixed(3),          // sub-ms, monotonic since time origin
+    client: { x: ev.clientX, y: ev.clientY },
+    page:   { x: ev.pageX,   y: ev.pageY },
+    screen: { x: ev.screenX, y: ev.screenY },
+    /* the viewport's origin on the desktop — exact, and the only honest way to
+       turn a client coord into a desktop one later on */
+    vp: { x: ev.screenX - ev.clientX, y: ev.screenY - ev.clientY },
+    win: { x: window.screenX, y: window.screenY,
+           ow: window.outerWidth, oh: window.outerHeight,
+           iw: window.innerWidth, ih: window.innerHeight },
+    scroll: { x: window.scrollX, y: window.scrollY },
+    ptr: lastPointer && (ev.timeStamp - lastPointer.ts) < 1500 ? lastPointer : null,
+    hit: el ? (el.id ? "#" + el.id : el.tagName.toLowerCase() +
+               (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/)[0] : "")) : "",
+    dpr: window.devicePixelRatio || 1,
+    mods: { alt: ev.altKey, shift: ev.shiftKey, ctrl: ev.ctrlKey, meta: ev.metaKey, button: ev.button },
+    hue: (n * 47) % 360,
+    moved: false
+  };
+  marks.push(m);
+  if (cfg.max > 0) while (marks.length > cfg.max) marks.shift();
+  sel = m.id;
+  renderAll(); save();
+}
+
+function delMark(id) {
+  const i = marks.findIndex(m => m.id === id);
+  if (i < 0) return;
+  snapshot();
+  marks.splice(i, 1);
+  if (sel === id) sel = null;
+  renderAll(); save();
+}
+
+function moveMark(m, x, y) {
+  m.x = clamp(x, 0, stage.clientWidth);
+  m.y = clamp(y, 0, stage.clientHeight);
+  m.w = stage.clientWidth; m.h = stage.clientHeight;
+  m.moved = true;
+}
+
+/* =======================================================================
+   render — markers
+   ======================================================================= */
+function markColor(m) {
+  return cfg.rainbow ? `hsl(${m.hue} 85% 60%)` : cfg.color;
+}
+
+/** a mark's position in the CURRENT stage space (marks are stored proportionally) */
+function posOf(m, w, h) { return [(m.w ? m.x / m.w : 0) * w, (m.h ? m.y / m.h : 0) * h]; }
+
+/** gap to the previous mark, measured in the current space so both ends agree */
+function deltaOf(i, w, h) {
+  if (i <= 0) return [0, 0];
+  const [ax, ay] = posOf(marks[i - 1], w, h), [bx, by] = posOf(marks[i], w, h);
+  return [bx - ax, by - ay];
+}
+
+function renderMarks() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  marklayer.innerHTML = "";
+  const frag = document.createDocumentFragment();
+
+  marks.forEach((m, i) => {
+    // stored coords are relative to the stage size at capture time -> keep them
+    // proportional so marks stay put when the stage is resized.
+    const fx = m.w ? m.x / m.w : 0, fy = m.h ? m.y / m.h : 0;
+    const px = fx * w, py = fy * h;
+
+    const el = document.createElement("div");
+    el.className = "mark" + (m.id === sel ? " sel" : "") + (fx > .78 ? " flip" : "");
+    el.dataset.id = m.id;
+    el.dataset.style = cfg.style;
+    el.style.left = (fx * 100) + "%";
+    el.style.top  = (fy * 100) + "%";
+    el.style.setProperty("--s", cfg.size + "px");
+    el.style.setProperty("--mk", markColor(m));
+    el.title = `#${m.n}  ${new Date(m.t).toLocaleTimeString()}`;
+
+    const g = document.createElement("span");
+    g.className = "glyph";
+    el.appendChild(g);
+
+    if (cfg.label !== "none") {
+      const [dx, dy] = display(px, py, w, h);
+      const u = unit();
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent =
+        cfg.label === "index"  ? "#" + m.n :
+        cfg.label === "coords" ? `${dx}${u}, ${dy}${u}` :
+                                 `#${m.n}\n${dx}${u}, ${dy}${u}`;
+      el.appendChild(tag);
+    }
+    frag.appendChild(el);
+  });
+  marklayer.appendChild(frag);
+}
+
+function renderGrid() {
+  const g = Math.max(1, cfg.grid);
+  if (!cfg.showGrid) { gridlayer.style.background = "none"; return; }
+  const line = "color-mix(in srgb, var(--line) 85%, transparent)";
+  gridlayer.style.background =
+    `repeating-linear-gradient(to right, ${line} 0 1px, transparent 1px ${g}px),` +
+    `repeating-linear-gradient(to bottom, ${line} 0 1px, transparent 1px ${g}px)`;
+}
+
+function renderMeta() {
+  const r = stage.getBoundingClientRect();
+  $("#m-size").textContent = `stage ${stage.clientWidth} × ${stage.clientHeight} css-px`;
+  $("#m-dpr").textContent  = `dpr ${window.devicePixelRatio || 1} → ${Math.round(stage.clientWidth * (devicePixelRatio||1))} × ${Math.round(stage.clientHeight * (devicePixelRatio||1))} dev-px`;
+  $("#m-rect").textContent = `viewport offset ${r.left.toFixed(1)}, ${r.top.toFixed(1)}`;
+  $("#m-desk").textContent = vpOrigin
+    ? `desktop: viewport origin ${vpOrigin.x}, ${vpOrigin.y} · stage origin ${Math.round(vpOrigin.x + r.left)}, ${Math.round(vpOrigin.y + r.top)} · screen ${screen.width}×${screen.height}`
+    : `desktop: move the pointer over the stage · screen ${screen.width}×${screen.height}`;
+  $("#m-img").textContent  = imgURL ? `image ${imgName}${imgNat ? ` (${imgNat.w}×${imgNat.h})` : ""}` : "no image";
+  $("#chip-count").querySelector("b").textContent = marks.length;
+}
+
+/* =======================================================================
+   render — log
+   ======================================================================= */
+function renderLog() {
+  const body = $("#logbody");
+  if (!marks.length) {
+    body.innerHTML = '<div class="empty">no clicks yet — click the stage</div>';
+    return;
+  }
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const u = unit();
+  const rows = marks.map((m, i) => {
+    const [px, py] = posOf(m, w, h);
+    const [dx, dy] = display(px, py, w, h);
+    const d = Math.hypot(...deltaOf(i, w, h));
+    const time = new Date(m.t);
+    const hhmmss = time.toLocaleTimeString([], { hour12: false }) + "." +
+                   String(time.getMilliseconds()).padStart(3, "0");
+    const tip = `stage   ${m.x.toFixed(3)}, ${m.y.toFixed(3)}  of ${m.w}×${m.h}\n` +
+                `client  ${m.client.x}, ${m.client.y}\n` +
+                `screen  ${m.screen.x}, ${m.screen.y}   (desktop, CSS px)` +
+                (m.vp ? `\nvp orig ${m.vp.x}, ${m.vp.y}   (desktop origin of the viewport)` : "") +
+                (m.win ? `\nwindow  ${m.win.x}, ${m.win.y}  outer ${m.win.ow}×${m.win.oh}  inner ${m.win.iw}×${m.win.ih}` : "") +
+                `\ndpr     ${m.dpr}  →  ${(m.screen.x * m.dpr).toFixed(1)}, ${(m.screen.y * m.dpr).toFixed(1)} device px` +
+                (m.ptr ? `\npointer ${m.ptr.type}  pressure ${m.ptr.pressure}  tilt ${m.ptr.tiltX}/${m.ptr.tiltY}` +
+                         `  contact ${m.ptr.cw}×${m.ptr.ch}` : "") +
+                (m.hit ? `\nhit     ${m.hit}` : "") +
+                (m.moved ? "\n(moved since capture)" : "");
+    return `<tr data-id="${m.id}" class="${m.id === sel ? "sel" : ""}" title="${esc(tip)}">
+      <td><span class="sw" style="background:${markColor(m)}"></span>#${m.n}${m.moved ? "*" : ""}</td>
+      <td>${dx}${u}</td><td>${dy}${u}</td>
+      <td>${fmt(d)}</td>
+      <td>${hhmmss}</td>
+      <td class="act" data-del="${m.id}" title="delete">×</td>
+    </tr>`;
+  }).join("");
+
+  body.innerHTML =
+    `<table><thead><tr>
+       <th>#</th><th>x</th><th>y</th><th>Δ prev</th><th>time</th><th></th>
+     </tr></thead><tbody>${rows}</tbody></table>`;
+
+  const selRow = body.querySelector("tr.sel");
+  if (selRow) selRow.scrollIntoView({ block: "nearest" });
+  if ($("#out").classList.contains("show")) refreshOut();
+}
+
+function renderAll() { renderMarks(); renderLog(); renderMeta(); }
+
+/* =======================================================================
+   export
+   ======================================================================= */
+let outMode = "json";
+
+function exportRows() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  return marks.map((m, i) => {
+    const fx = m.w ? m.x / m.w : 0, fy = m.h ? m.y / m.h : 0;
+    const [dx, dy] = displayRaw(fx * w, fy * h, w, h);
+    const [ddx, ddy] = deltaOf(i, w, h);
+    return {
+      n: m.n,
+      x: dx, y: dy, unit: cfg.units, origin: cfg.origin,
+      stage_x: +m.x.toFixed(4), stage_y: +m.y.toFixed(4),
+      stage_w: m.w, stage_h: m.h,
+      norm_x: +(fx).toFixed(6), norm_y: +(fy).toFixed(6),
+      pct_x: +(fx * 100).toFixed(4), pct_y: +(fy * 100).toFixed(4),
+      dev_x: +(m.x * m.dpr).toFixed(3), dev_y: +(m.y * m.dpr).toFixed(3),
+      client_x: m.client.x, client_y: m.client.y,
+      page_x: m.page.x, page_y: m.page.y,
+      scroll_x: m.scroll ? m.scroll.x : 0, scroll_y: m.scroll ? m.scroll.y : 0,
+      /* desktop space (CSS px). screen_* is the pointer; vp_* is the viewport's
+         own origin, so desktop = vp + client for anything else on the page. */
+      screen_x: m.screen.x, screen_y: m.screen.y,
+      vp_origin_x: m.vp ? m.vp.x : null, vp_origin_y: m.vp ? m.vp.y : null,
+      screen_dev_x: m.vp ? +(m.screen.x * m.dpr).toFixed(2) : null,
+      screen_dev_y: m.vp ? +(m.screen.y * m.dpr).toFixed(2) : null,
+      win_x: m.win ? m.win.x : null, win_y: m.win ? m.win.y : null,
+      win_outer_w: m.win ? m.win.ow : null, win_outer_h: m.win ? m.win.oh : null,
+      win_inner_w: m.win ? m.win.iw : null, win_inner_h: m.win ? m.win.ih : null,
+      browser_chrome_h: m.win ? m.win.oh - m.win.ih : null,
+      dpr: m.dpr,
+      pointer_type: m.ptr ? m.ptr.type : "", pointer_id: m.ptr ? m.ptr.id : null,
+      pressure: m.ptr ? m.ptr.pressure : null,
+      tilt_x: m.ptr ? m.ptr.tiltX : null, tilt_y: m.ptr ? m.ptr.tiltY : null,
+      twist: m.ptr ? m.ptr.twist : null,
+      contact_w: m.ptr ? m.ptr.cw : null, contact_h: m.ptr ? m.ptr.ch : null,
+      hit: m.hit || "",
+      ts: m.ts != null ? m.ts : null,
+      dt_prev: i > 0 && m.ts != null && marks[i - 1].ts != null
+        ? +(m.ts - marks[i - 1].ts).toFixed(3) : 0,
+      d_prev: +Math.hypot(ddx, ddy).toFixed(4),
+      d_prev_x: +ddx.toFixed(4), d_prev_y: +ddy.toFixed(4),
+      button: m.mods.button, alt: m.mods.alt, shift: m.mods.shift,
+      ctrl: m.mods.ctrl, meta: m.mods.meta,
+      moved: m.moved,
+      t: m.t, iso: new Date(m.t).toISOString()
+    };
+  });
+}
+
+function toJSON() {
+  const s = window.screen || {};
+  return JSON.stringify({
+    generator: "clicked-relative-position",
+    exported: new Date().toISOString(),
+    stage: { w: stage.clientWidth, h: stage.clientHeight, dpr: window.devicePixelRatio || 1 },
+    /* desktop the capture happened on. all of it is CSS px: multiply by dpr for
+       physical pixels, and note dpr folds OS scaling and browser zoom together.
+       multi-monitor origins are relative to the primary screen; the precise
+       layout needs getScreenDetails(), which file:// cannot ask for. */
+    display: {
+      screen_w: s.width, screen_h: s.height,
+      avail_w: s.availWidth, avail_h: s.availHeight,
+      avail_left: s.availLeft, avail_top: s.availTop,
+      color_depth: s.colorDepth,
+      orientation: s.orientation ? s.orientation.type : null,
+      dpr: window.devicePixelRatio || 1
+    },
+    image: imgURL ? { name: imgName, natural: imgNat } : null,
+    config: cfg,
+    schema: {
+      independent: ["client_x/y", "screen_x/y", "vp_origin_x/y", "win_*", "scroll_x/y",
+                    "dpr", "stage_w/h", "ts", "pointer_*", "pressure", "tilt_*", "contact_*"],
+      derived: ["x/y (= current units+origin)", "stage_x/y (= client - stage rect)",
+                "norm_*", "pct_*", "dev_* (= stage * dpr)", "screen_dev_* (= screen * dpr)",
+                "page_x/y (= client + scroll)", "d_prev*", "dt_prev"],
+      note: "derived fields are algebra over the independent ones, kept for convenience"
+    },
+    count: marks.length,
+    points: exportRows()
+  }, null, 2);
+}
+function toCSV() {
+  const rows = exportRows();
+  if (!rows.length) return "";
+  const cols = Object.keys(rows[0]);
+  const cell = v => typeof v === "string" && /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : String(v);
+  return [cols.join(","), ...rows.map(r => cols.map(c => cell(r[c])).join(","))].join("\n");
+}
+function refreshOut() { $("#out").value = outMode === "json" ? toJSON() : toCSV(); }
+
+function showOut(mode) {
+  const out = $("#out");
+  if (out.classList.contains("show") && outMode === mode) { out.classList.remove("show"); return; }
+  outMode = mode; out.classList.add("show"); refreshOut();
+}
+
+function download() {
+  const json = outMode === "json";
+  const blob = new Blob([json ? toJSON() : toCSV()], { type: json ? "application/json" : "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "clicked-positions-" + new Date().toISOString().replace(/[:.]/g, "-") + (json ? ".json" : ".csv");
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast("saved " + a.download);
+}
+
+async function copyText(txt, label) {
+  try {
+    await navigator.clipboard.writeText(txt);
+    toast("copied " + label); return true;
+  } catch (e) { /* fall through */ }
+  try {                                    // file:// / permission-less fallback
+    const ta = document.createElement("textarea");
+    ta.value = txt;
+    ta.style.cssText = "position:fixed;left:-9999px;top:0";
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    if (ok) { toast("copied " + label); return true; }
+  } catch (e) { /* fall through */ }
+  const out = $("#out");
+  out.classList.add("show"); out.value = txt; out.select();
+  toast("clipboard blocked — copy from the panel");
+  return false;
+}
+
+function copyOut() {
+  return copyText(outMode === "json" ? toJSON() : toCSV(),
+                  outMode.toUpperCase() + " (" + marks.length + " points)");
+}
+
+/* ---------------- portable, reproducible descriptors ---------------- */
+
+/** where the background image actually sits inside the stage (fit + centring),
+    so a point can be expressed in the image's own natural pixels */
+function imageRect(w, h) {
+  if (!imgNat) return null;
+  const iw = imgNat.w, ih = imgNat.h;
+  let dw, dh;
+  if (cfg.fit === "cover")        { const s = Math.max(w / iw, h / ih); dw = iw * s; dh = ih * s; }
+  else if (cfg.fit === "contain") { const s = Math.min(w / iw, h / ih); dw = iw * s; dh = ih * s; }
+  else if (cfg.fit === "100% 100%") { dw = w; dh = h; }
+  else { dw = iw; dh = ih; }                       // natural
+  return { x: (w - dw) / 2, y: (h - dh) / 2, w: dw, h: dh, sx: dw / iw, sy: dh / ih };
+}
+
+/** everything needed to put this point back on some other page, by hand or by a model */
+function fullRecord(m) {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const [px, py] = posOf(m, w, h);
+  const fx = w ? px / w : 0, fy = h ? py / h : 0;
+  const r = stage.getBoundingClientRect();
+  const ir = imageRect(w, h);
+  const p3 = n => +n.toFixed(3), p6 = n => +n.toFixed(6);
+
+  let inImage = null;
+  if (ir) {
+    const ix = (px - ir.x) / ir.sx, iy = (py - ir.y) / ir.sy;
+    inImage = {
+      inside: ix >= 0 && iy >= 0 && ix <= imgNat.w && iy <= imgNat.h,
+      natural_px: { x: p3(ix), y: p3(iy) },
+      fraction:   { x: p6(ix / imgNat.w), y: p6(iy / imgNat.h) },
+      note: "image is drawn with background-size:" + cfg.fit + " and centred, so the " +
+            "letterbox offset is already removed here"
+    };
+  }
+
+  return {
+    what: "One recorded click, expressed in every space needed to place it again elsewhere.",
+    index: m.n,
+    captured_at: new Date(m.t).toISOString(),
+
+    // the portable part — this is what survives a different screen/window/zoom
+    fraction_of_box: { x: p6(fx), y: p6(fy) },
+    percent_of_box:  { x: p3(fx * 100), y: p3(fy * 100) },
+
+    box_it_is_relative_to: {
+      kind: imgURL ? "stage with background image" : "stage element",
+      css_px: { w, h },
+      origin_in_viewport: { x: p3(r.left), y: p3(r.top) },
+      origin_on_desktop: m.vp ? { x: p3(m.vp.x + r.left), y: p3(m.vp.y + r.top) } : null,
+      element_under_point: m.hit || null
+    },
+    image: ir ? Object.assign({ name: imgName, natural: imgNat, fit: cfg.fit,
+                                drawn_rect_in_stage: { x: p3(ir.x), y: p3(ir.y), w: p3(ir.w), h: p3(ir.h) } },
+                              inImage) : null,
+
+    position: {
+      stage_css_px:   { x: p3(px), y: p3(py) },
+      from_edges_css_px: { left: p3(px), top: p3(py), right: p3(w - px), bottom: p3(h - py) },
+      stage_device_px: { x: p3(px * m.dpr), y: p3(py * m.dpr) },
+      viewport_css_px: m.client,
+      desktop_css_px:  m.screen,
+      in_current_units: (() => { const [a, b] = display(px, py, w, h);
+                                 return { x: a, y: b, units: cfg.units, origin: cfg.origin }; })()
+    },
+
+    environment: {
+      dpr: m.dpr,
+      viewport: m.win ? { w: m.win.iw, h: m.win.ih } : null,
+      window_on_desktop: m.win ? { x: m.win.x, y: m.win.y, outer_w: m.win.ow, outer_h: m.win.oh } : null,
+      viewport_origin_on_desktop: m.vp || null,
+      screen: { w: screen.width, h: screen.height, avail_w: screen.availWidth, avail_h: screen.availHeight },
+      caveat: "all px here are CSS px; multiply by dpr for physical pixels. dpr folds OS " +
+              "scaling and browser zoom together, and desktop coords are relative to the primary screen."
+    },
+    pointer: m.ptr,
+
+    reproduce: {
+      rule: "Only fraction_of_box survives a different screen, window size or zoom. " +
+            "Multiply it by the target element's box; never reuse the px values across machines.",
+      css: `position:absolute; left:${p3(fx * 100)}%; top:${p3(fy * 100)}%; transform:translate(-50%,-50%);`,
+      js_point_in_element:
+        `const r = el.getBoundingClientRect();\n` +
+        `const x = r.left + r.width  * ${p6(fx)};\n` +
+        `const y = r.top  + r.height * ${p6(fy)};`,
+      js_synthetic_click:
+        `el.dispatchEvent(new MouseEvent('click', { clientX: x, clientY: y, bubbles: true }));`,
+      automation_locator_click:
+        `await page.locator(SELECTOR).click({ position: { x: box.width * ${p6(fx)}, y: box.height * ${p6(fy)} } });`,
+      automation_mouse_click:
+        `const b = await (await page.$(SELECTOR)).boundingBox();\n` +
+        `await page.mouse.click(b.x + b.width * ${p6(fx)}, b.y + b.height * ${p6(fy)});`,
+      human: `Inside the target box, the point is ${p3(fx * 100)}% across from the left edge and ` +
+             `${p3(fy * 100)}% down from the top` +
+             (inImage && inImage.inside
+               ? `; on the image itself that is pixel ${Math.round(inImage.natural_px.x)}, ` +
+                 `${Math.round(inImage.natural_px.y)} of ${imgNat.w}×${imgNat.h}.`
+               : `.`)
+    }
+  };
+}
+
+/** the same idea for the whole set */
+function fullSetRecord() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  return {
+    what: "Every recorded click, each with the box-relative fraction needed to reproduce it elsewhere.",
+    exported: new Date().toISOString(),
+    box: { css_px: { w, h }, kind: imgURL ? "stage with background image" : "stage element" },
+    image: imgURL ? { name: imgName, natural: imgNat, fit: cfg.fit } : null,
+    rule: "Multiply fraction_of_box by the target element's box to place each point.",
+    count: marks.length,
+    points: marks.map(m => fullRecord(m))
+  };
+}
+
+/* =======================================================================
+   config binding
+   ======================================================================= */
+function syncControls() {
+  $$("[data-cfg]").forEach(el => {
+    const k = el.dataset.cfg;
+    if (el.type === "checkbox") el.checked = !!cfg[k];
+    else el.value = cfg[k];
+  });
+  $("#v-prec").textContent = cfg.prec;
+  $("#v-size").textContent = cfg.size + "px";
+  document.documentElement.dataset.theme = cfg.theme;
+  $("#c-fw").disabled = $("#c-fh").disabled = cfg.aspect !== "fixed";
+}
+
+function readControl(el) {
+  const k = el.dataset.cfg;
+  if (el.type === "checkbox") cfg[k] = el.checked;
+  else if (el.type === "number" || el.type === "range") cfg[k] = clamp(parseFloat(el.value) || 0, +el.min || 0, +el.max || 1e9);
+  else cfg[k] = el.value;
+}
+
+$$("[data-cfg]").forEach(el => {
+  el.addEventListener("input", () => {
+    readControl(el);
+    syncControls();
+    layoutStage();
+    renderGrid();
+    renderAll();
+    save();
+  });
+});
+
+/* image */
+$("#c-img").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  if (imgURL) URL.revokeObjectURL(imgURL);
+  imgURL = URL.createObjectURL(f); imgName = f.name;
+  const probe = new Image();
+  probe.onload = () => { imgNat = { w: probe.naturalWidth, h: probe.naturalHeight }; renderMeta(); };
+  probe.src = imgURL;
+  applyImage();
+  toast("image loaded (not persisted)");
+});
+$("#btn-img-clear").addEventListener("click", () => {
+  if (imgURL) URL.revokeObjectURL(imgURL);
+  imgURL = null; imgName = ""; imgNat = null;
+  $("#c-img").value = "";
+  applyImage();
+});
+function applyImage() {
+  stage.classList.toggle("has-img", !!imgURL);
+  stage.style.backgroundImage = imgURL ? `url("${imgURL}")` : "none";
+  stage.style.backgroundSize = cfg.fit;
+  renderMeta();
+}
+
+/* =======================================================================
+   stage interaction
+   ======================================================================= */
+let suppressClick = false;
+
+stage.addEventListener("click", ev => {
+  if (suppressClick) { suppressClick = false; return; }
+  const hit = ev.target.closest(".mark");
+  if (hit) {
+    if (ev.altKey) delMark(hit.dataset.id);
+    else { sel = hit.dataset.id; renderAll(); }
+    return;
+  }
+  addMark(ev);
+});
+
+/* =======================================================================
+   context menu
+   ======================================================================= */
+const ctxEl = $("#ctx");
+let ctxOpen = false;
+
+function closeMenu() {
+  if (!ctxOpen) return;
+  ctxOpen = false; ctxEl.hidden = true; ctxEl.innerHTML = "";
+}
+
+function openMenu(cx, cy, head, items) {
+  ctxEl.innerHTML = "";
+  if (head) {
+    const h = document.createElement("div");
+    h.className = "hd"; h.textContent = head;
+    ctxEl.appendChild(h);
+  }
+  items.forEach(it => {
+    if (it.sep) { ctxEl.appendChild(Object.assign(document.createElement("div"), { className: "sep" })); return; }
+    const b = document.createElement("button");
+    b.className = "mi" + (it.danger ? " danger" : "");
+    b.appendChild(document.createTextNode(it.label));
+    if (it.key) {
+      const k = document.createElement("span");
+      k.className = "k"; k.textContent = it.key;
+      b.appendChild(k);
+    }
+    b.addEventListener("click", () => { closeMenu(); it.run(); });
+    ctxEl.appendChild(b);
+  });
+
+  ctxEl.hidden = false; ctxOpen = true;
+  const r = ctxEl.getBoundingClientRect();
+  ctxEl.style.left = Math.max(4, Math.min(cx, window.innerWidth  - r.width  - 4)) + "px";
+  ctxEl.style.top  = Math.max(4, Math.min(cy, window.innerHeight - r.height - 4)) + "px";
+}
+
+function markMenuItems(m) {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  const [px, py] = posOf(m, w, h);
+  const [dx, dy] = display(px, py, w, h);
+  const u = unit();
+  const fx = w ? px / w : 0, fy = h ? py / h : 0;
+  return [
+    { label: "Copy coordinates", key: `${dx}${u}, ${dy}${u}`,
+      run: () => copyText(`${dx}${u}, ${dy}${u}`, "coordinates") },
+    { label: "Copy JSON (this mark)", key: "flat",
+      run: () => copyText(JSON.stringify(exportRows().find(r => r.n === m.n), null, 2), `JSON of #${m.n}`) },
+    { label: "Copy JSON (full)", key: "portable",
+      run: () => copyText(JSON.stringify(fullRecord(m), null, 2), `full record of #${m.n}`) },
+    { sep: true },
+    { label: "Copy CSS position", key: "%",
+      run: () => copyText(`left: ${(fx * 100).toFixed(3)}%;\ntop: ${(fy * 100).toFixed(3)}%;\ntransform: translate(-50%, -50%);`, "CSS") },
+    { label: "Copy automation click", key: "js",
+      run: () => copyText(fullRecord(m).reproduce.automation_locator_click, "automation snippet") },
+    { sep: true },
+    { label: "Remove mark", key: "del", danger: true, run: () => delMark(m.id) }
+  ];
+}
+
+function stageMenuItems(ev) {
+  const p = applySnap(localPoint(ev));
+  return [
+    { label: "Add mark here", key: "click", run: () => addMark(ev) },
+    { sep: true },
+    { label: "Copy all (JSON)", key: `${marks.length}`, run: () => copyText(toJSON(), "JSON") },
+    { label: "Copy all (CSV)", key: `${marks.length}`, run: () => copyText(toCSV(), "CSV") },
+    { label: "Copy all (full)", key: "portable",
+      run: () => copyText(JSON.stringify(fullSetRecord(), null, 2), "full set") },
+    { sep: true },
+    { label: cfg.showGrid ? "Hide grid" : "Show grid", key: "g",
+      run: () => { cfg.showGrid = !cfg.showGrid; syncControls(); renderGrid(); save(); } },
+    { label: cfg.snap ? "Disable snapping" : "Snap to grid", key: `${cfg.grid}px`,
+      run: () => { cfg.snap = !cfg.snap; syncControls(); save(); } },
+    { sep: true },
+    { label: "Clear all marks", key: `${marks.length}`, danger: true,
+      run: () => { if (marks.length && confirm(`Delete all ${marks.length} marks?`)) {
+        snapshot(); marks = []; sel = null; renderAll(); save(); } } }
+  ];
+}
+
+stage.addEventListener("contextmenu", ev => {
+  ev.preventDefault();
+  const hit = ev.target.closest(".mark");
+  if (hit) {
+    const m = marks.find(x => x.id === hit.dataset.id);
+    if (!m) return;
+    sel = m.id; renderAll();
+    const w = stage.clientWidth, h = stage.clientHeight;
+    const [px, py] = posOf(m, w, h);
+    const [dx, dy] = display(px, py, w, h);
+    openMenu(ev.clientX, ev.clientY, `#${m.n}  ${dx}${unit()}, ${dy}${unit()}`, markMenuItems(m));
+  } else {
+    openMenu(ev.clientX, ev.clientY, `stage ${stage.clientWidth}×${stage.clientHeight}`, stageMenuItems(ev));
+  }
+});
+
+/* dismiss: an outside press closes the menu without also dropping a mark */
+document.addEventListener("pointerdown", ev => {
+  if (!ctxOpen || ctxEl.contains(ev.target)) return;
+  closeMenu();
+  if (stage.contains(ev.target)) suppressClick = true;
+}, true);
+window.addEventListener("blur", closeMenu);
+
+/* live readout + crosshair */
+stage.addEventListener("pointermove", ev => {
+  const p = localPoint(ev);
+  const s = applySnap(p);
+  const [dx, dy] = display(s.x, s.y, p.w, p.h);
+  const u = unit();
+  $("#chip-live").querySelector("b").textContent   = `${dx}${u}, ${dy}${u}`;
+  $("#chip-norm").querySelector("b").textContent   =
+    `${fmt(p.w ? s.x / p.w * 100 : 0)}, ${fmt(p.h ? s.y / p.h * 100 : 0)}`;
+  $("#chip-client").querySelector("b").textContent = `${ev.clientX}, ${ev.clientY}`;
+  $("#chip-page").querySelector("b").textContent   = `${Math.round(ev.pageX)}, ${Math.round(ev.pageY)}`;
+  $("#chip-screen").querySelector("b").textContent = `${ev.screenX}, ${ev.screenY}`;
+  vpOrigin = { x: ev.screenX - ev.clientX, y: ev.screenY - ev.clientY };
+
+  if (cfg.hair) {
+    if (!hairlayer.firstChild)
+      hairlayer.innerHTML = '<div class="hair v"></div><div class="hair h"></div>';
+    hairlayer.firstChild.style.left = s.x + "px";
+    hairlayer.lastChild.style.top   = s.y + "px";
+  } else hairlayer.innerHTML = "";
+});
+stage.addEventListener("pointerleave", () => { hairlayer.innerHTML = ""; });
+
+/* drag markers */
+let drag = null;
+marklayer.addEventListener("pointerdown", ev => {
+  const hit = ev.target.closest(".mark");
+  if (!hit || !cfg.drag || ev.altKey || ev.button !== 0) return;
+  const m = marks.find(x => x.id === hit.dataset.id);
+  if (!m) return;
+  const p = localPoint(ev);
+  const fx = m.w ? m.x / m.w : 0, fy = m.h ? m.y / m.h : 0;
+  drag = { m, el: hit, ox: fx * p.w - p.x, oy: fy * p.h - p.y, dirty: false };
+  hit.setPointerCapture(ev.pointerId);
+  hit.classList.add("dragging");
+  sel = m.id;
+  snapshot();
+});
+marklayer.addEventListener("pointermove", ev => {
+  if (!drag) return;
+  const p = localPoint(ev);
+  const s = applySnap({ x: p.x + drag.ox, y: p.y + drag.oy });
+  moveMark(drag.m, s.x, s.y);
+  drag.dirty = true;
+  drag.el.style.left = (drag.m.w ? drag.m.x / drag.m.w * 100 : 0) + "%";
+  drag.el.style.top  = (drag.m.h ? drag.m.y / drag.m.h * 100 : 0) + "%";
+});
+marklayer.addEventListener("pointerup", () => {
+  if (!drag) return;
+  drag.el.classList.remove("dragging");
+  if (drag.dirty) { suppressClick = true; renderAll(); save(); }
+  else undoStack.pop();
+  drag = null;
+});
+
+/* =======================================================================
+   log interaction
+   ======================================================================= */
+$("#logbody").addEventListener("contextmenu", ev => {
+  const tr = ev.target.closest("tr[data-id]");
+  if (!tr) return;
+  ev.preventDefault();
+  const m = marks.find(x => x.id === tr.dataset.id);
+  if (!m) return;
+  sel = m.id; renderAll();
+  openMenu(ev.clientX, ev.clientY, `#${m.n}`, markMenuItems(m));
+});
+
+$("#logbody").addEventListener("click", ev => {
+  const del = ev.target.closest("[data-del]");
+  if (del) { delMark(del.dataset.del); return; }
+  const tr = ev.target.closest("tr[data-id]");
+  if (!tr) return;
+  sel = tr.dataset.id === sel ? null : tr.dataset.id;
+  renderAll();
+});
+
+/* =======================================================================
+   toolbar
+   ======================================================================= */
+$("#btn-json").addEventListener("click", () => showOut("json"));
+$("#btn-csv").addEventListener("click",  () => showOut("csv"));
+$("#btn-copy").addEventListener("click", copyOut);
+$("#btn-save").addEventListener("click", download);
+$("#btn-undo").addEventListener("click", () => doUndo());
+$("#btn-clear").addEventListener("click", () => {
+  if (!marks.length) return;
+  if (!confirm(`Delete all ${marks.length} marks?`)) return;
+  snapshot(); marks = []; sel = null; renderAll(); save();
+});
+$("#btn-cycle").addEventListener("click", ev => cycleStage(ev.shiftKey));
+$("#btn-cycle").addEventListener("contextmenu", ev => { ev.preventDefault(); cycleStage(true); });
+$("#stages").addEventListener("click", ev => {
+  const pip = ev.target.closest(".pip");
+  if (pip) setStage(+pip.dataset.stage);
+});
+$("#btn-theme").addEventListener("click", () => {
+  cfg.theme = cfg.theme === "dark" ? "light" : "dark";
+  syncControls(); save();
+});
+$("#btn-reset").addEventListener("click", () => {
+  if (!confirm("Reset all config to defaults? (marks are kept)")) return;
+  Object.assign(cfg, DEFAULTS);
+  syncControls(); layoutStage(); renderGrid(); applyImage(); renderAll(); save();
+  toast("config reset");
+});
+
+function doUndo() { if (restore(undoStack, redoStack)) { renderAll(); save(); toast("undo"); } }
+function doRedo() { if (restore(redoStack, undoStack)) { renderAll(); save(); toast("redo"); } }
+
+/* =======================================================================
+   keyboard
+   ======================================================================= */
+document.addEventListener("keydown", ev => {
+  const tag = (ev.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "select" || tag === "textarea") return;
+
+  const k = ev.key.toLowerCase();
+  if (ctxOpen && k === "escape") { ev.preventDefault(); closeMenu(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === "z") { ev.preventDefault(); ev.shiftKey ? doRedo() : doUndo(); return; }
+  if ((ev.ctrlKey || ev.metaKey) && k === "y") { ev.preventDefault(); doRedo(); return; }
+  if (ev.ctrlKey || ev.metaKey) return;
+
+  if (k === "\\" || k === "|") { ev.preventDefault(); cycleStage(ev.shiftKey || k === "|"); return; }
+  if (k >= "1" && k <= "4")    { setStage(+k - 1); return; }
+  if (k === "escape") {
+    if (zen() && !sel) { setStage(0); return; }   // esc is the way back out of zen
+    sel = null; renderAll(); return;
+  }
+  if (k === "g") { cfg.showGrid = !cfg.showGrid; syncControls(); renderGrid(); save(); return; }
+  if (k === "h") { cfg.hair = !cfg.hair; syncControls(); hairlayer.innerHTML = ""; save(); return; }
+
+  const m = marks.find(x => x.id === sel);
+  if (!m) return;
+
+  if (k === "delete" || k === "backspace") { ev.preventDefault(); delMark(m.id); return; }
+
+  const step = ev.shiftKey ? 10 : (cfg.snap ? Math.max(1, cfg.grid) : 1);
+  const d = { arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, -step], arrowdown: [0, step] }[k];
+  if (!d) return;
+  ev.preventDefault();
+  snapshot();
+  const w = stage.clientWidth, h = stage.clientHeight;
+  moveMark(m, (m.w ? m.x / m.w : 0) * w + d[0], (m.h ? m.y / m.h : 0) * h + d[1]);
+  renderAll(); save();
+});
+
+/* =======================================================================
+   boot
+   ======================================================================= */
+let rt;
+window.addEventListener("resize", () => {
+  clearTimeout(rt);
+  rt = setTimeout(() => { layoutStage(); renderAll(); }, 60);
+});
+new ResizeObserver(() => renderMeta()).observe(stage);
+
+/* keep the stage sized while the side panels animate open/closed */
+let lastWrap = "";
+new ResizeObserver(() => {
+  const k = wrap.clientWidth + "x" + wrap.clientHeight;
+  if (k === lastWrap) return;
+  lastWrap = k;
+  layoutStage(); renderMarks();
+  clearTimeout(rt); rt = setTimeout(renderLog, 120);
+}).observe(wrap);
+
+$$("aside").forEach(a => a.addEventListener("transitionend", ev => {
+  if (ev.propertyName === "width") { layoutStage(); renderAll(); }
+}));
+
+/* in zen the bar is click-through; brighten it when the pointer is near the top */
+window.addEventListener("pointermove", ev => {
+  if (!zen()) return;
+  document.body.classList.toggle("peek", ev.clientY < 54);
+}, { passive: true });
+
+load();
+const urlStage = parseUIParam();
+syncControls();
+renderGrid();
+applyImage();
+setStage(urlStage === null ? cfg.ui : urlStage, true);   // url param wins over storage
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: Clicked Relative Position
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+authors:
+  - alias: Aesthetic Vulpes
+    website: https://github.com/didvc/
+repository-code: https://github.com/html-js/clicked-relative-position
+url: https://html-js.github.io/clicked-relative-position/
+license: AGPL-3.0
+version: 0.1.0
+date-released: 2026-10-31
+abstract: >
+  A single-page, zero-dependency browser tool that records the position of
+  every click relative to a box, in CSS pixels, percent, 0 to 1 fractions or
+  device pixels, with a selectable origin. Clicks become numbered, draggable
+  marks with undo; a local background image can be measured in its own
+  pixels; and the log exports to JSON or CSV with a portable, box-relative
+  record per point for placing it again elsewhere. Everything runs locally.
+keywords:
+  - click-coordinates
+  - mouse-position
+  - relative-position
+  - xy-coordinates
+  - image-coordinates
+  - pixel-coordinates
+  - coordinate-picker
+  - percentage-position
+  - image-map
+  - web-development

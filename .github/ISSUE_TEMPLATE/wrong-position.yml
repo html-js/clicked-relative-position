@@ -1,0 +1,37 @@
+name: Wrong or confusing position
+description: A click was recorded somewhere other than where you expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Before pasting an export, remove anything you prefer to keep private.
+        Exports contain your screen size, your window position and the time of
+        each click.
+  - type: textarea
+    id: setup
+    attributes:
+      label: Settings in use
+      description: Units, origin, aspect, snapping, and whether an image was loaded and with which fit.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Where you clicked and the coordinates you expected to see.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What was recorded
+      description: The coordinates shown in the log or the label, and anything else that looked off.
+    validations:
+      required: true
+  - type: textarea
+    id: export
+    attributes:
+      label: Export (optional)
+      description: From "json" or "copy" above the log, edited as you see fit.
+      render: json
